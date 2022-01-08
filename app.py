@@ -1,28 +1,156 @@
-# 1. import Flask
-from flask import Flask
+import numpy as np
+import sqlalchemy
+from sqlalchemy.ext.automap import automap_base
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, func
+from flask import Flask, jsonify
+import datetime as dt
 
-# 2. Create an app, being sure to pass __name__
-app = Flask(__name__) # do this every time
+#################################################
+# Database Setup
+#################################################
+engine = create_engine("sqlite:///Resources/hawaii.sqlite")
 
-# 3. Define what to do when a user hits the index route. a route is more or less a uri endpoint. we are creating an endpoint. # like openweather api endpoing
-#we in flask design the logic to tell the server what to return for a get requests for example.
-# we use a app route decorator
-# the forward slash below designates the home or index page of our application
+# reflect an existing database into a new model
+Base = automap_base()
+
+# reflect the tables
+Base.prepare(engine, reflect=True)
+
+# Save reference to the tables
+Measurement = Base.classes.measurement
+Station = Base.classes.station
+
+#################################################
+# Flask Setup
+#################################################
+app = Flask(__name__)
+
+
+#################################################
+# Flask Routes
+#################################################
+
+
+# Convert the query results to a dictionary using `date` as the key and `prcp` as the value. Return the JSON representation of your dictionary.
+@app.route("/api/v1.0/precipitation")
+def precipitationfunction():
+    
+    # Create our session (link) from Python to the DB
+    session = Session(engine)
+    
+    # Calculate the date one year from the last date in data set.
+    twelve_months_prev = dt.date(2017, 8, 23) - dt.timedelta(days=365)
+    
+    # Perform queries to retrieve data
+    datesprecpsqueryresults = session.query(Measurement.date, Measurement.prcp).\
+        filter(Measurement.date > twelve_months_prev).all()
+
+    session.close()    
+    
+    precips_dict = []
+    for date, precip in datesprecpsqueryresults:
+        precip_dict = {}
+        precip_dict["date"] = date
+        precip_dict["prcp"] = precip       
+        precips_dict.append(precip_dict)
+    
+    return jsonify(precips_dict)
+
+# List all routes that are available.
 @app.route("/")
-# then we create a function to tell the application what to do when a cli makes a requsat to our route. we can call it home or whatever we want
-def home():
-    print("Server received request for 'Home' page...")
-    return "Welcome to my 'Home' page!"
+def welcome():
+    return (
+        f"Welcome to my Climate App!<br/>"
+        f"Available Routes:<br/>"
+        f"/api/v1.0/precipitation<br/>"
+        f"/api/v1.0/stations<br/>"
+        f"/api/v1.0/tobs<br/>"
+        f"/api/v1.0/[start yyyy-mm-dd]<br/>"
+        f"/api/v1.0/[start yyyy-mm-dd]_[end yyyy-mm-dd]<br/>"
+    )
 
-# the return will eventaully call an html file. whate you call in return within the function is what will show up on the page. the print will show up in the terminal below
+# Return a JSON list of stations from the dataset.
+@app.route("/api/v1.0/stations")
+def stationsfunction():
+    
+    # Create our session (link) from Python to the DB
+    session = Session(engine)
 
-# 4. Define what to do when a user hits the /about route
-# then create another route for an about description
-@app.route("/about")
-def about():
-    print("Server received request for 'About' page...")
-    return "Welcome to my 'About' page!"
+    # Perform query to retrieve data to a tuple list
+    stationsqueryresult=session.query(Station.name).order_by(Station.name).all()
 
-# then 
+    session.close()    
+    
+    # Convert tuple list into normal list
+    stationslist = list(np.ravel(stationsqueryresult))
+
+    # return a jsonified normal list
+    return jsonify(stationslist)
+
+# Return a JSON list of temperature observations (TOBS) for the previous year.
+@app.route("/api/v1.0/tobs")
+def tobsfunction():
+    # Create our session (link) from Python to the DB
+    session = Session(engine)
+    
+    # Calculate the date one year from the last date in data set
+    twelve_months_prev = dt.date(2017, 8, 23) - dt.timedelta(days=365)
+    
+    # Query to retrieve data to a tuple list
+    tobs_prev_yr_queryresult = session.query(Measurement.tobs).filter(Measurement.date > twelve_months_prev).filter(Measurement.station == "USC00519281").order_by(Measurement.date).all()
+    
+    session.close()    
+    
+    # Convert tuple list into normal list
+    tobslist = list(np.ravel(tobs_prev_yr_queryresult))
+
+    # return a jsonified normal list    
+    return jsonify(tobslist)
+
+# Return a JSON list of the minimum temperature, the average temperature, and the max temperature for a given start date
+@app.route("/api/v1.0/<start_date>")
+def start_date_summ(start_date):
+    # Create our session (link) from Python to the DB
+    session = Session(engine)
+
+    # Query to retrieve summarized data
+    StartTempQueryResults = session.query(func.min(Measurement.tobs).label('MinTemp'),func.max(Measurement.tobs).label('MaxTemp'),func.avg(Measurement.tobs).label('AvgTemp')).filter(Measurement.date >= start_date).all()
+    
+    session.close() 
+
+    # Create a dictionary from the row data and append to a list of start_date_tobs
+    start_date_tobs_list = []
+    for MinTemp, AvgTemp, MaxTemp in StartTempQueryResults:
+        start_date_tobs_dict = {}
+        start_date_tobs_dict["MinTemp"] = MinTemp
+        start_date_tobs_dict["AvgTemp"] = AvgTemp
+        start_date_tobs_dict["MaxTemp"] = MaxTemp
+        start_date_tobs_list.append(start_date_tobs_dict) 
+    return jsonify(start_date_tobs_list)
+
+
+# Return a JSON list of the minimum temperature, the average temperature, and the max temperature for given start_end dates
+@app.route("/api/v1.0/<start_date>_<end_date>") #http://127.0.0.1:5000/api/v1.0/2016-08-01/2016-08-31
+def Start_end_date(start_date, end_date):
+    # Create our session (link) from Python to the DB
+    session = Session(engine)
+
+    # Query to retrieve summarized data
+    StartEndTempQueryResults = session.query(func.min(Measurement.tobs).label('MinTemp'),func.max(Measurement.tobs).label('MaxTemp'),func.avg(Measurement.tobs).label('AvgTemp')).\
+                filter(Measurement.date >= start_date).filter(Measurement.date <= end_date).all()
+
+    session.close() 
+
+    # Create dict from the row data and append to a list of start_end_date_tobs
+    start_end_tobs = []
+    for MinTemp, AvgTemp, MaxTemp in StartEndTempQueryResults:
+        start_end_tobs_dict = {}
+        start_end_tobs_dict["MinTemp"] = MinTemp
+        start_end_tobs_dict["AvgTemp"] = AvgTemp
+        start_end_tobs_dict["MaxTemp"] = MaxTemp
+        start_end_tobs.append(start_end_tobs_dict) 
+    return jsonify(start_end_tobs)
+
 if __name__ == "__main__":
     app.run(debug=True)
